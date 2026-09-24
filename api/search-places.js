@@ -4,25 +4,21 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  if (req.method === 'GET') {
-    const key = process.env.GOOGLE_PLACES_API_KEY || '';
-    return res.json({
-      configured: Boolean(key),
-      keyHint: key ? '••••••••' + key.slice(-4) : null
-    });
-  }
-
   const key = process.env.GOOGLE_PLACES_API_KEY;
-  if (!key) return res.status(500).json({ error: 'GOOGLE_PLACES_API_KEY não configurada no servidor' });
+  if (!key) return res.status(500).json({ error: 'GOOGLE_PLACES_API_KEY não configurada' });
 
-  const {
-    nicho, cidade, estado, pageToken
-  } = req.body || {};
+  const p = req.method === 'GET' ? req.query : (req.body || {});
+  const nicho = p.nicho || p.textQuery;
+  const cidade = p.cidade || '';
+  const estado = p.estado || '';
+  if (!nicho) return res.status(400).json({ error: 'Informe o nicho' });
+
   const local = cidade && estado ? `${cidade}, ${estado}` : 'Brasil';
-  const textQuery = `${nicho} em ${local}`;
-
-  const body = { textQuery, pageSize: 20, languageCode: 'pt-BR', regionCode: 'BR' };
-  if (pageToken) body.pageToken = pageToken;
+  const body = {
+    textQuery: `${nicho} em ${local}`,
+    pageSize: 20, languageCode: 'pt-BR', regionCode: 'BR'
+  };
+  if (p.pageToken) body.pageToken = p.pageToken;
 
   const resp = await fetch('https://places.googleapis.com/v1/places:searchText', {
     method: 'POST',
@@ -35,20 +31,15 @@ export default async function handler(req, res) {
   });
 
   const data = await resp.json();
-  if (!resp.ok) return res.status(resp.status).json({ error: data.error?.message || 'Erro no Google Places' });
+  if (!resp.ok) return res.status(resp.status).json({ error: data.error?.message || 'Erro no Google Places', status: resp.status });
 
-  const empresas = (data.places || []).map(p => ({
-    id: p.id,
-    nome: p.displayName?.text,
-    endereco: p.formattedAddress,
-    telefone: p.nationalPhoneNumber || null,
-    categoria: (p.types || [])[0] || null,
-    avaliacao: p.rating ?? null,
-    numAvaliacoes: p.userRatingCount ?? 0,
-    mapsUrl: p.googleMapsUri,
-    website: p.websiteUri || null,
-    semSite: !p.websiteUri
+  const empresas = (data.places || []).map(x => ({
+    nome: x.displayName?.text,
+    endereco: x.formattedAddress,
+    telefone: x.nationalPhoneNumber || null,
+    website: x.websiteUri || null,
+    semSite: !x.websiteUri
   }));
 
-  res.json({ empresas, nextPageToken: data.nextPageToken || null, total: empresas.length });
+  res.json({ total: empresas.length, empresas, nextPageToken: data.nextPageToken || null });
 }
